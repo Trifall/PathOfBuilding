@@ -344,7 +344,8 @@ function CompareEntryClass:RefreshSkillSelectControls(controls, mainGroup, suffi
 		local selectedPart = activeEffect.grantedEffect.parts[controls.mainSkillPart.selIndex]
 		if selectedPart and selectedPart.stages then
 			controls.mainSkillStageCount.shown = true
-			controls.mainSkillStageCount.buf = tostring(activeEffect.srcInstance["skillStageCount"..suffix] or selectedPart.stagesMin or 1)
+			-- Default staged skill parts to their calculated maximum when no count is saved
+			controls.mainSkillStageCount.buf = tostring(activeEffect.srcInstance["skillStageCount"..suffix] or activeSkill.skillData.stagesMax or selectedPart.stagesMin or 1)
 		end
 	end
 

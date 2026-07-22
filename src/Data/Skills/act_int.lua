@@ -11005,20 +11005,33 @@ skills["KineticFusillade"] = {
 		{
 			name = "1 Projectile"
 		},
+		{
+			name = "Accumulated Projectiles",
+			stages = true,
+		},
 	},
 	preDamageFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format
+		local projectileCount = output.ProjectileCount
 
-		if activeSkill.skillPart == 1 then
+		if activeSkill.skillPart == 3 then
+			local selectedProjectileCount = activeSkill.skillModList:Sum("BASE", activeSkill.skillCfg, "Multiplier:KineticFusilladeStage")
+			local maximumProjectileCount = activeSkill.skillModList:Override(activeSkill.skillCfg, "ProjectileCountMaximum")
+			projectileCount = math.min(math.ceil(selectedProjectileCount / output.ProjectileCount) * output.ProjectileCount, maximumProjectileCount)
+			output.KineticFusilladeSelectedProjectiles = selectedProjectileCount
+			output.KineticFusilladeAccumulatedProjectiles = projectileCount
+		end
+
+		if activeSkill.skillPart == 1 or activeSkill.skillPart == 3 then
 			-- Set base dpsMultiplier for projectile count
-			activeSkill.skillData.dpsMultiplier = output.ProjectileCount
+			skillData.dpsMultiplier = projectileCount
 
 			-- Calculate average damage scaling for sequential projectiles
 			-- Each projectile does more damage based on how many came before it
 			local moreDamagePerProj = skillData.damagePerProjectile or 0
-			if moreDamagePerProj ~= 0 and output.ProjectileCount > 1 then
+			if moreDamagePerProj ~= 0 and projectileCount > 1 then
 				-- Average multiplier: sum of (0, X, 2X, 3X, ..., (n-1)X) / n
 				-- This equals: X * (0 + 1 + 2 + ... + (n-1)) / n = X * n(n-1)/2 / n = X * (n-1)/2
 				local avgMoreMult = moreDamagePerProj * (output.ProjectileCount - 1) / 2
@@ -11030,8 +11043,8 @@ skills["KineticFusillade"] = {
 				if breakdown then
 					local breakdownSequential = {}
 					t_insert(breakdownSequential, s_format("^8Each projectile deals^7 %d%%^8 more damage per previous projectile", moreDamagePerProj))
-					t_insert(breakdownSequential, s_format("^8With^7 %d^8 projectiles, damage progression is:^7", output.ProjectileCount))
-					for i = 1, output.ProjectileCount do
+					t_insert(breakdownSequential, s_format("^8With^7 %d^8 projectiles, damage progression is:^7", projectileCount))
+					for i = 1, projectileCount do
 						local projMult = moreDamagePerProj * (i - 1)
 						t_insert(breakdownSequential, s_format("  ^8Projectile %d:^7 %d%%^8 more damage", i, projMult))
 					end
@@ -11053,6 +11066,8 @@ skills["KineticFusillade"] = {
 
 		if activeSkill.skillPart == 1 then
 			projectileCount = output.ProjectileCount
+		elseif activeSkill.skillPart == 3 then
+			projectileCount = output.KineticFusilladeAccumulatedProjectiles
 		end
 
 		-- Calculate effective attack rate accounting for delayed projectile firing
@@ -11068,6 +11083,59 @@ skills["KineticFusillade"] = {
 		local maxEffectiveAPS = 1 / effectiveDelayRounded
 		local maxEffectivePredictiveAPS = 1 / effectiveDelay
 		local currentAPS = output.Speed
+
+		-- Runs per weapon pass, but sequence timing only applies once
+		if output.KineticFusilladeTimingCalculated then
+			return
+		end
+		output.KineticFusilladeTimingCalculated = true
+
+		-- Calculate the attacks needed to accumulate and release the selected projectile count
+		if activeSkill.skillPart == 3 then
+			local projectilesPerAttack = output.ProjectileCount
+			local attacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local attackInterval = currentAPS and currentAPS > 0 and 1 / currentAPS
+			local accumulationTime = attackInterval and (attacksRequired - 1) * attackInterval or 0
+			local hoverDelayRounded = math.ceil(hoverDelay * durationMod / data.misc.ServerTickTime) * data.misc.ServerTickTime
+			local canAccumulate = attacksRequired <= 1 or (attackInterval and attackInterval <= hoverDelayRounded)
+			local cycleTime = attackInterval and accumulationTime + math.max(attackInterval, effectiveDelayRounded)
+			local effectiveProjectileRate = canAccumulate and cycleTime and projectileCount / cycleTime or 0
+
+			output.KineticFusilladeAttacksToAccumulate = attacksRequired
+			output.KineticFusilladeAccumulationCycleTime = cycleTime or 0
+			output.KineticFusilladeEffectiveProjectileRate = effectiveProjectileRate
+			output.KineticFusilladeCanAccumulate = canAccumulate
+			-- Convert the full sequence into proper DPS and cost rates
+			local rotationMultiplier = currentAPS and currentAPS > 0 and effectiveProjectileRate / currentAPS / projectileCount or 0
+			skillData.dpsMultiplier = (skillData.dpsMultiplier or projectileCount) * rotationMultiplier
+			skillData.costRateOverride = cycleTime and canAccumulate and attacksRequired / cycleTime or currentAPS or 0
+			skillData.costRateLabel = "accumulation cycle"
+
+			if breakdown then
+				local breakdownAccumulation = {}
+				t_insert(breakdownAccumulation, s_format("^8Accumulated projectiles:^7 %d", projectileCount))
+				if output.KineticFusilladeSelectedProjectiles ~= projectileCount then
+					t_insert(breakdownAccumulation, s_format("^8Selected count:^7 %d ^8(rounds up to complete attacks)", output.KineticFusilladeSelectedProjectiles))
+				end
+				t_insert(breakdownAccumulation, s_format("^8Projectiles created per attack:^7 %d", projectilesPerAttack))
+				t_insert(breakdownAccumulation, s_format("^8Attacks required:^7 %d", attacksRequired))
+				if attackInterval then
+					t_insert(breakdownAccumulation, s_format("^8Attack interval:^7 %.3fs", attackInterval))
+					t_insert(breakdownAccumulation, s_format("^8Accumulation time:^7 (%d - 1) x %.3fs = %.3fs", attacksRequired, attackInterval, accumulationTime))
+				end
+				t_insert(breakdownAccumulation, s_format("^8Release time:^7 (%.1f + %.2f x %d) x %.4f = %.3fs", hoverDelay, baseDelayBetweenProjectiles, projectileCount - 1, durationMod, effectiveDelay))
+				t_insert(breakdownAccumulation, s_format("^8Lockstep release time:^7 %.3fs", effectiveDelayRounded))
+				if cycleTime then
+					t_insert(breakdownAccumulation, s_format("^8Full cycle time:^7 %.3fs", cycleTime))
+					t_insert(breakdownAccumulation, s_format("^8Effective projectile rate:^7 %d / %.3f = %.2f/s", projectileCount, cycleTime, effectiveProjectileRate))
+				end
+				if not canAccumulate then
+					t_insert(breakdownAccumulation, "^1Projectiles release before the next attack can accumulate them")
+				end
+				breakdown.KineticFusilladeAccumulation = breakdownAccumulation
+			end
+			return
+		end
 
 		output.KineticFusilladeMaxEffectiveAPS = maxEffectiveAPS
 
@@ -11133,7 +11201,8 @@ skills["KineticFusillade"] = {
 			-- Display only
 		},
 		["kinetic_fusillade_maximum_floating_projectiles"] = {
-			mod("ProjectileCountMaximum", "OVERRIDE", nil)
+			mod("ProjectileCountMaximum", "OVERRIDE", nil),
+			mod("Multiplier:KineticFusilladeMaxStages", "BASE", nil, 0, 0, { type = "SkillPart", skillPart = 3 }),
 		},
 	},
 	baseFlags = {
@@ -11223,20 +11292,33 @@ skills["KineticFusilladeAltX"] = {
 		{
 			name = "1 Projectile"
 		},
+		{
+			name = "Accumulated Projectiles",
+			stages = true,
+		},
 	},
 	preDamageFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format
+		local projectileCount = output.ProjectileCount
 
-		if activeSkill.skillPart == 1 then
+		if activeSkill.skillPart == 3 then
+			local selectedProjectileCount = activeSkill.skillModList:Sum("BASE", activeSkill.skillCfg, "Multiplier:KineticFusilladeofDetonationStage")
+			local maximumProjectileCount = activeSkill.skillModList:Override(activeSkill.skillCfg, "ProjectileCountMaximum")
+			projectileCount = math.min(math.ceil(selectedProjectileCount / output.ProjectileCount) * output.ProjectileCount, maximumProjectileCount)
+			output.KineticFusilladeSelectedProjectiles = selectedProjectileCount
+			output.KineticFusilladeAccumulatedProjectiles = projectileCount
+		end
+
+		if activeSkill.skillPart == 1 or activeSkill.skillPart == 3 then
 			-- Set base dpsMultiplier for projectile count
-			activeSkill.skillData.dpsMultiplier = output.ProjectileCount
+			skillData.dpsMultiplier = projectileCount
 
 			-- Calculate average damage scaling for sequential projectiles
 			-- Each projectile does more damage based on how many came before it
 			local moreDamagePerProj = skillData.damagePerProjectile or 0
-			if moreDamagePerProj ~= 0 and output.ProjectileCount > 1 then
+			if moreDamagePerProj ~= 0 and projectileCount > 1 then
 				-- Average multiplier: sum of (0, X, 2X, 3X, ..., (n-1)X) / n
 				-- This equals: X * (0 + 1 + 2 + ... + (n-1)) / n = X * n(n-1)/2 / n = X * (n-1)/2
 				local avgMoreMult = moreDamagePerProj * (output.ProjectileCount - 1) / 2
@@ -11248,8 +11330,8 @@ skills["KineticFusilladeAltX"] = {
 				if breakdown then
 					local breakdownSequential = {}
 					t_insert(breakdownSequential, s_format("^8Each projectile deals^7 %d%%^8 more damage per previous projectile", moreDamagePerProj))
-					t_insert(breakdownSequential, s_format("^8With^7 %d^8 projectiles, damage progression is:^7", output.ProjectileCount))
-					for i = 1, output.ProjectileCount do
+					t_insert(breakdownSequential, s_format("^8With^7 %d^8 projectiles, damage progression is:^7", projectileCount))
+					for i = 1, projectileCount do
 						local projMult = moreDamagePerProj * (i - 1)
 						t_insert(breakdownSequential, s_format("  ^8Projectile %d:^7 %d%%^8 more damage", i, projMult))
 					end
@@ -11271,6 +11353,8 @@ skills["KineticFusilladeAltX"] = {
 
 		if activeSkill.skillPart == 1 then
 			projectileCount = output.ProjectileCount
+		elseif activeSkill.skillPart == 3 then
+			projectileCount = output.KineticFusilladeAccumulatedProjectiles
 		end
 
 		-- Calculate effective attack rate accounting for delayed projectile firing
@@ -11286,6 +11370,59 @@ skills["KineticFusilladeAltX"] = {
 		local maxEffectiveAPS = 1 / effectiveDelayRounded
 		local maxEffectivePredictiveAPS = 1 / effectiveDelay
 		local currentAPS = output.Speed
+
+		-- Runs per weapon pass, but sequence timing only applies once
+		if output.KineticFusilladeTimingCalculated then
+			return
+		end
+		output.KineticFusilladeTimingCalculated = true
+
+		-- Model the attacks needed to accumulate and release the selected projectile count
+		if activeSkill.skillPart == 3 then
+			local projectilesPerAttack = output.ProjectileCount
+			local attacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local attackInterval = currentAPS and currentAPS > 0 and 1 / currentAPS
+			local accumulationTime = attackInterval and (attacksRequired - 1) * attackInterval or 0
+			local hoverDelayRounded = math.ceil(hoverDelay * durationMod / data.misc.ServerTickTime) * data.misc.ServerTickTime
+			local canAccumulate = attacksRequired <= 1 or (attackInterval and attackInterval <= hoverDelayRounded)
+			local cycleTime = attackInterval and accumulationTime + math.max(attackInterval, effectiveDelayRounded)
+			local effectiveProjectileRate = canAccumulate and cycleTime and projectileCount / cycleTime or 0
+
+			output.KineticFusilladeAttacksToAccumulate = attacksRequired
+			output.KineticFusilladeAccumulationCycleTime = cycleTime or 0
+			output.KineticFusilladeEffectiveProjectileRate = effectiveProjectileRate
+			output.KineticFusilladeCanAccumulate = canAccumulate
+			-- Convert the full sequence into proper DPS and cost rates
+			local rotationMultiplier = currentAPS and currentAPS > 0 and effectiveProjectileRate / currentAPS / projectileCount or 0
+			skillData.dpsMultiplier = (skillData.dpsMultiplier or projectileCount) * rotationMultiplier
+			skillData.costRateOverride = cycleTime and canAccumulate and attacksRequired / cycleTime or currentAPS or 0
+			skillData.costRateLabel = "accumulation cycle"
+
+			if breakdown then
+				local breakdownAccumulation = {}
+				t_insert(breakdownAccumulation, s_format("^8Accumulated projectiles:^7 %d", projectileCount))
+				if output.KineticFusilladeSelectedProjectiles ~= projectileCount then
+					t_insert(breakdownAccumulation, s_format("^8Selected count:^7 %d ^8(rounds up to complete attacks)", output.KineticFusilladeSelectedProjectiles))
+				end
+				t_insert(breakdownAccumulation, s_format("^8Projectiles created per attack:^7 %d", projectilesPerAttack))
+				t_insert(breakdownAccumulation, s_format("^8Attacks required:^7 %d", attacksRequired))
+				if attackInterval then
+					t_insert(breakdownAccumulation, s_format("^8Attack interval:^7 %.3fs", attackInterval))
+					t_insert(breakdownAccumulation, s_format("^8Accumulation time:^7 (%d - 1) x %.3fs = %.3fs", attacksRequired, attackInterval, accumulationTime))
+				end
+				t_insert(breakdownAccumulation, s_format("^8Release time:^7 (%.1f + %.2f x %d) x %.4f = %.3fs", hoverDelay, baseDelayBetweenProjectiles, projectileCount - 1, durationMod, effectiveDelay))
+				t_insert(breakdownAccumulation, s_format("^8Lockstep release time:^7 %.3fs", effectiveDelayRounded))
+				if cycleTime then
+					t_insert(breakdownAccumulation, s_format("^8Full cycle time:^7 %.3fs", cycleTime))
+					t_insert(breakdownAccumulation, s_format("^8Effective projectile rate:^7 %d / %.3f = %.2f/s", projectileCount, cycleTime, effectiveProjectileRate))
+				end
+				if not canAccumulate then
+					t_insert(breakdownAccumulation, "^1Projectiles release before the next attack can accumulate them")
+				end
+				breakdown.KineticFusilladeAccumulation = breakdownAccumulation
+			end
+			return
+		end
 
 		output.KineticFusilladeMaxEffectiveAPS = maxEffectiveAPS
 
@@ -11351,7 +11488,8 @@ skills["KineticFusilladeAltX"] = {
 			-- Display only
 		},
 		["kinetic_fusillade_maximum_floating_projectiles"] = {
-			mod("ProjectileCountMaximum", "OVERRIDE", nil)
+			mod("ProjectileCountMaximum", "OVERRIDE", nil),
+			mod("Multiplier:KineticFusilladeofDetonationMaxStages", "BASE", nil, 0, 0, { type = "SkillPart", skillPart = 3 }),
 		},
 	},
 	baseFlags = {

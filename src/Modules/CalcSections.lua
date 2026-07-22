@@ -763,6 +763,9 @@ return {
 	{ label = "DPS Multiplier", haveOutput = "SkillDPSMultiplier", { format = "{3:output:SkillDPSMultiplier}", { breakdown = "SkillDPSMultiplier" }, }, },
 	{ label = "Average Seq More", haveOutput = "KineticFusilladeAvgMoreMult", { format = "{1:output:KineticFusilladeAvgMoreMult}%", { breakdown = "KineticFusilladeSequentialBreakdown" }, }, },
 	{ label = "Max Effective APS", haveOutput = "KineticFusilladeMaxEffectiveAPS", { format = "{2:output:KineticFusilladeMaxEffectiveAPS}", { breakdown = "KineticFusilladeMaxEffectiveAPS" }, }, },
+	{ label = "Hovering Projectiles", haveOutput = "KineticFusilladeAccumulatedProjectiles", { format = "{0:output:KineticFusilladeAccumulatedProjectiles}", { breakdown = "KineticFusilladeAccumulation" }, }, },
+	{ label = "Seq. Cycle Time", haveOutput = "KineticFusilladeAccumulatedProjectiles", { format = "{3:output:KineticFusilladeAccumulationCycleTime}s", { breakdown = "KineticFusilladeAccumulation" }, }, },
+	{ label = "Effective Proj. Rate", haveOutput = "KineticFusilladeAccumulatedProjectiles", { format = "{2:output:KineticFusilladeEffectiveProjectileRate}/s", { breakdown = "KineticFusilladeAccumulation" }, }, },
 	-- Traps
 	{ label = "Avg. Active Traps", haveOutput = "AverageActiveTraps", { format = "{2:output:AverageActiveTraps}", { breakdown = "AverageActiveTraps" }, }, },
 	{ label = "Active Trap Limit", flag = "trap", { format = "{0:output:ActiveTrapLimit}", { modName = "ActiveTrapLimit", cfg = "skill" }, }, },

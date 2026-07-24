@@ -11019,7 +11019,9 @@ skills["KineticFusillade"] = {
 		if activeSkill.skillPart == 3 then
 			local selectedProjectileCount = activeSkill.skillModList:Sum("BASE", activeSkill.skillCfg, "Multiplier:KineticFusilladeStage")
 			local maximumProjectileCount = activeSkill.skillModList:Override(activeSkill.skillCfg, "ProjectileCountMaximum")
-			projectileCount = math.min(math.ceil(selectedProjectileCount / output.ProjectileCount) * output.ProjectileCount, maximumProjectileCount)
+			local minimumAttacksRequired = math.ceil(selectedProjectileCount / output.ProjectileCount)
+			local attacksRequired = math.ceil(minimumAttacksRequired / (output.Repeats or 1)) * (output.Repeats or 1)
+			projectileCount = math.min(attacksRequired * output.ProjectileCount, maximumProjectileCount)
 			output.KineticFusilladeSelectedProjectiles = selectedProjectileCount
 			output.KineticFusilladeAccumulatedProjectiles = projectileCount
 		end
@@ -11034,8 +11036,14 @@ skills["KineticFusillade"] = {
 			if moreDamagePerProj ~= 0 and projectileCount > 1 then
 				-- Average multiplier: sum of (0, X, 2X, 3X, ..., (n-1)X) / n
 				-- This equals: X * (0 + 1 + 2 + ... + (n-1)) / n = X * n(n-1)/2 / n = X * (n-1)/2
-				local avgMoreMult = moreDamagePerProj * (output.ProjectileCount - 1) / 2
+				local avgMoreMult = moreDamagePerProj * (projectileCount - 1) / 2
 				activeSkill.skillModList:NewMod("Damage", "MORE", avgMoreMult, "Skill:KineticFusillade")
+				-- Keep average hit/Poison damage while exposing the sequence range to strongest-active ailments
+				local averageDamageMultiplier = 1 + avgMoreMult / 100
+				local maximumDamageMultiplier = 1 + moreDamagePerProj * (projectileCount - 1) / 100
+				local strongestAilments = bit.bor(KeywordFlag.Bleed, KeywordFlag.Ignite)
+				activeSkill.skillModList:NewMod("MinDamage", "MORE", (1 / averageDamageMultiplier - 1) * 100, "Skill:KineticFusillade", 0, strongestAilments)
+				activeSkill.skillModList:NewMod("MaxDamage", "MORE", (maximumDamageMultiplier / averageDamageMultiplier - 1) * 100, "Skill:KineticFusillade", 0, strongestAilments)
 
 				-- Store the average multiplier for display
 				output.KineticFusilladeAvgMoreMult = avgMoreMult
@@ -11056,7 +11064,7 @@ skills["KineticFusillade"] = {
 			end
 		end
 	end,
-	postCritFunc = function(activeSkill, output, breakdown)
+	preHitRateFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format
@@ -11076,6 +11084,7 @@ skills["KineticFusillade"] = {
 		-- Formula: totalTime = (hoverDelay + delayBetweenProj * nProj) * durationMod
 		local hoverDelay = skillData.duration
 		local durationMod = output.DurationMod
+		-- The first projectile fires after the hover delay, so N projectiles have N - 1 firing gaps
 		local baseTimeForAllProjectiles = baseDelayBetweenProjectiles * (projectileCount - 1)
 		local effectiveDelay = (hoverDelay + baseTimeForAllProjectiles) * durationMod
 		-- Testing in game showed playing in Lockstep rounded the duration to server ticks but Predictive did not
@@ -11093,7 +11102,10 @@ skills["KineticFusillade"] = {
 		-- Calculate the attacks needed to accumulate and release the selected projectile count
 		if activeSkill.skillPart == 3 then
 			local projectilesPerAttack = output.ProjectileCount
-			local attacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local minimumAttacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local repeats = output.Repeats or 1
+			local usesRequired = math.ceil(minimumAttacksRequired / repeats)
+			local attacksRequired = usesRequired * repeats
 			local attackInterval = currentAPS and currentAPS > 0 and 1 / currentAPS
 			local accumulationTime = attackInterval and (attacksRequired - 1) * attackInterval or 0
 			local hoverDelayRounded = math.ceil(hoverDelay * durationMod / data.misc.ServerTickTime) * data.misc.ServerTickTime
@@ -11102,14 +11114,15 @@ skills["KineticFusillade"] = {
 			local effectiveProjectileRate = canAccumulate and cycleTime and projectileCount / cycleTime or 0
 
 			output.KineticFusilladeAttacksToAccumulate = attacksRequired
+			output.KineticFusilladeUsesToAccumulate = usesRequired
 			output.KineticFusilladeAccumulationCycleTime = cycleTime or 0
 			output.KineticFusilladeEffectiveProjectileRate = effectiveProjectileRate
 			output.KineticFusilladeCanAccumulate = canAccumulate
 			-- Convert the full sequence into proper DPS and cost rates
 			local rotationMultiplier = currentAPS and currentAPS > 0 and effectiveProjectileRate / currentAPS / projectileCount or 0
 			skillData.dpsMultiplier = (skillData.dpsMultiplier or projectileCount) * rotationMultiplier
-			skillData.costRateOverride = cycleTime and canAccumulate and attacksRequired / cycleTime or currentAPS or 0
-			skillData.costRateLabel = "accumulation cycle"
+			skillData.costRateOverride = cycleTime and canAccumulate and usesRequired / cycleTime or currentAPS and currentAPS / repeats or 0
+			skillData.costRateLabel = "skill use"
 
 			if breakdown then
 				local breakdownAccumulation = {}
@@ -11118,7 +11131,11 @@ skills["KineticFusillade"] = {
 					t_insert(breakdownAccumulation, s_format("^8Selected count:^7 %d ^8(rounds up to complete attacks)", output.KineticFusilladeSelectedProjectiles))
 				end
 				t_insert(breakdownAccumulation, s_format("^8Projectiles created per attack:^7 %d", projectilesPerAttack))
-				t_insert(breakdownAccumulation, s_format("^8Attacks required:^7 %d", attacksRequired))
+				t_insert(breakdownAccumulation, s_format("^8Attacks needed to reach projectile count:^7 %d", minimumAttacksRequired))
+				if repeats > 1 then
+					t_insert(breakdownAccumulation, s_format("^8Attacks performed after repeats:^7 %d", attacksRequired))
+					t_insert(breakdownAccumulation, s_format("^8Paid skill uses required:^7 %d", usesRequired))
+				end
 				if attackInterval then
 					t_insert(breakdownAccumulation, s_format("^8Attack interval:^7 %.3fs", attackInterval))
 					t_insert(breakdownAccumulation, s_format("^8Accumulation time:^7 (%d - 1) x %.3fs = %.3fs", attacksRequired, attackInterval, accumulationTime))
@@ -11306,7 +11323,9 @@ skills["KineticFusilladeAltX"] = {
 		if activeSkill.skillPart == 3 then
 			local selectedProjectileCount = activeSkill.skillModList:Sum("BASE", activeSkill.skillCfg, "Multiplier:KineticFusilladeofDetonationStage")
 			local maximumProjectileCount = activeSkill.skillModList:Override(activeSkill.skillCfg, "ProjectileCountMaximum")
-			projectileCount = math.min(math.ceil(selectedProjectileCount / output.ProjectileCount) * output.ProjectileCount, maximumProjectileCount)
+			local minimumAttacksRequired = math.ceil(selectedProjectileCount / output.ProjectileCount)
+			local attacksRequired = math.ceil(minimumAttacksRequired / (output.Repeats or 1)) * (output.Repeats or 1)
+			projectileCount = math.min(attacksRequired * output.ProjectileCount, maximumProjectileCount)
 			output.KineticFusilladeSelectedProjectiles = selectedProjectileCount
 			output.KineticFusilladeAccumulatedProjectiles = projectileCount
 		end
@@ -11321,8 +11340,14 @@ skills["KineticFusilladeAltX"] = {
 			if moreDamagePerProj ~= 0 and projectileCount > 1 then
 				-- Average multiplier: sum of (0, X, 2X, 3X, ..., (n-1)X) / n
 				-- This equals: X * (0 + 1 + 2 + ... + (n-1)) / n = X * n(n-1)/2 / n = X * (n-1)/2
-				local avgMoreMult = moreDamagePerProj * (output.ProjectileCount - 1) / 2
+				local avgMoreMult = moreDamagePerProj * (projectileCount - 1) / 2
 				activeSkill.skillModList:NewMod("Damage", "MORE", avgMoreMult, "Skill:KineticFusilladeAltX")
+				-- Keep average hit/Poison damage while exposing the sequence range to strongest-active ailments
+				local averageDamageMultiplier = 1 + avgMoreMult / 100
+				local maximumDamageMultiplier = 1 + moreDamagePerProj * (projectileCount - 1) / 100
+				local strongestAilments = bit.bor(KeywordFlag.Bleed, KeywordFlag.Ignite)
+				activeSkill.skillModList:NewMod("MinDamage", "MORE", (1 / averageDamageMultiplier - 1) * 100, "Skill:KineticFusilladeAltX", 0, strongestAilments)
+				activeSkill.skillModList:NewMod("MaxDamage", "MORE", (maximumDamageMultiplier / averageDamageMultiplier - 1) * 100, "Skill:KineticFusilladeAltX", 0, strongestAilments)
 
 				-- Store the average multiplier for display
 				output.KineticFusilladeAvgMoreMult = avgMoreMult
@@ -11343,7 +11368,7 @@ skills["KineticFusilladeAltX"] = {
 			end
 		end
 	end,
-	postCritFunc = function(activeSkill, output, breakdown)
+	preHitRateFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format
@@ -11363,6 +11388,7 @@ skills["KineticFusilladeAltX"] = {
 		-- Formula: totalTime = (hoverDelay + delayBetweenProj * nProj) * durationMod
 		local hoverDelay = skillData.duration
 		local durationMod = output.DurationMod
+		-- The first projectile fires after the hover delay, so N projectiles have N - 1 firing gaps
 		local baseTimeForAllProjectiles = baseDelayBetweenProjectiles * (projectileCount - 1)
 		local effectiveDelay = (hoverDelay + baseTimeForAllProjectiles) * durationMod
 		-- Testing in game showed playing in Lockstep rounded the duration to server ticks but Predictive did not
@@ -11380,7 +11406,10 @@ skills["KineticFusilladeAltX"] = {
 		-- Model the attacks needed to accumulate and release the selected projectile count
 		if activeSkill.skillPart == 3 then
 			local projectilesPerAttack = output.ProjectileCount
-			local attacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local minimumAttacksRequired = math.ceil(projectileCount / projectilesPerAttack)
+			local repeats = output.Repeats or 1
+			local usesRequired = math.ceil(minimumAttacksRequired / repeats)
+			local attacksRequired = usesRequired * repeats
 			local attackInterval = currentAPS and currentAPS > 0 and 1 / currentAPS
 			local accumulationTime = attackInterval and (attacksRequired - 1) * attackInterval or 0
 			local hoverDelayRounded = math.ceil(hoverDelay * durationMod / data.misc.ServerTickTime) * data.misc.ServerTickTime
@@ -11389,14 +11418,15 @@ skills["KineticFusilladeAltX"] = {
 			local effectiveProjectileRate = canAccumulate and cycleTime and projectileCount / cycleTime or 0
 
 			output.KineticFusilladeAttacksToAccumulate = attacksRequired
+			output.KineticFusilladeUsesToAccumulate = usesRequired
 			output.KineticFusilladeAccumulationCycleTime = cycleTime or 0
 			output.KineticFusilladeEffectiveProjectileRate = effectiveProjectileRate
 			output.KineticFusilladeCanAccumulate = canAccumulate
 			-- Convert the full sequence into proper DPS and cost rates
 			local rotationMultiplier = currentAPS and currentAPS > 0 and effectiveProjectileRate / currentAPS / projectileCount or 0
 			skillData.dpsMultiplier = (skillData.dpsMultiplier or projectileCount) * rotationMultiplier
-			skillData.costRateOverride = cycleTime and canAccumulate and attacksRequired / cycleTime or currentAPS or 0
-			skillData.costRateLabel = "accumulation cycle"
+			skillData.costRateOverride = cycleTime and canAccumulate and usesRequired / cycleTime or currentAPS and currentAPS / repeats or 0
+			skillData.costRateLabel = "skill use"
 
 			if breakdown then
 				local breakdownAccumulation = {}
@@ -11405,7 +11435,11 @@ skills["KineticFusilladeAltX"] = {
 					t_insert(breakdownAccumulation, s_format("^8Selected count:^7 %d ^8(rounds up to complete attacks)", output.KineticFusilladeSelectedProjectiles))
 				end
 				t_insert(breakdownAccumulation, s_format("^8Projectiles created per attack:^7 %d", projectilesPerAttack))
-				t_insert(breakdownAccumulation, s_format("^8Attacks required:^7 %d", attacksRequired))
+				t_insert(breakdownAccumulation, s_format("^8Attacks needed to reach projectile count:^7 %d", minimumAttacksRequired))
+				if repeats > 1 then
+					t_insert(breakdownAccumulation, s_format("^8Attacks performed after repeats:^7 %d", attacksRequired))
+					t_insert(breakdownAccumulation, s_format("^8Paid skill uses required:^7 %d", usesRequired))
+				end
 				if attackInterval then
 					t_insert(breakdownAccumulation, s_format("^8Attack interval:^7 %.3fs", attackInterval))
 					t_insert(breakdownAccumulation, s_format("^8Accumulation time:^7 (%d - 1) x %.3fs = %.3fs", attacksRequired, attackInterval, accumulationTime))

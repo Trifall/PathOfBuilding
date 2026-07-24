@@ -3117,6 +3117,8 @@ function calcs.offence(env, actor, activeSkill)
 		output.DoubleDamageEffect = output.DoubleDamageChance / 100
 		output.ScaledDamageEffect = output.ScaledDamageEffect * (1 + output.DoubleDamageEffect + output.TripleDamageEffect)
 
+		-- Skills with delayed or rotational hits can finalise their effective hit rate here.
+		runSkillFunc("preHitRateFunc")
 		local hitRate = output.HitChance / 100 * (globalOutput.HitSpeed or globalOutput.Speed) * skillData.dpsMultiplier
 
 		-- Calculate culling DPS
@@ -5720,9 +5722,9 @@ function calcs.offence(env, actor, activeSkill)
 			elseif skillFlags.totem then
 				useSpeed = (output.Cooldown and output.Cooldown > 0 and (output.TotemPlacementSpeed > 0 and output.TotemPlacementSpeed or 1 / output.Cooldown) or output.TotemPlacementSpeed) / repeats
 				timeType = "totem placement"
-			-- Multi-use skill rotations can override the rate used for resource costs e.g. Kinetic Fusillade
+			-- Multi-use skill rotations can override the final paid-use rate used for resource costs e.g. Kinetic Fusillade
 			elseif skillData.costRateOverride then
-				useSpeed = skillData.costRateOverride / repeats
+				useSpeed = skillData.costRateOverride
 				timeType = skillData.costRateLabel or "skill use"
 			-- nil check until ailment pass for skills like Vortex
 			elseif skillModList:Flag(nil, "HasSeals") and skillModList:Flag(nil, "UseMaxUnleash") and env.player.mainSkill.skillData.hitTimeOverride then

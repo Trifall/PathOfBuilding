@@ -3117,8 +3117,8 @@ function calcs.offence(env, actor, activeSkill)
 		output.DoubleDamageEffect = output.DoubleDamageChance / 100
 		output.ScaledDamageEffect = output.ScaledDamageEffect * (1 + output.DoubleDamageEffect + output.TripleDamageEffect)
 
-		-- Skills with delayed or rotational hits can finalise their effective hit rate here.
-		runSkillFunc("preHitRateFunc")
+		-- Allow opt-in skill rotations to finalize their DPS multiplier after generic adjustments.
+		runSkillFunc("finalizeDpsMultiplierFunc")
 		local hitRate = output.HitChance / 100 * (globalOutput.HitSpeed or globalOutput.Speed) * skillData.dpsMultiplier
 
 		-- Calculate culling DPS
@@ -5722,7 +5722,7 @@ function calcs.offence(env, actor, activeSkill)
 			elseif skillFlags.totem then
 				useSpeed = (output.Cooldown and output.Cooldown > 0 and (output.TotemPlacementSpeed > 0 and output.TotemPlacementSpeed or 1 / output.Cooldown) or output.TotemPlacementSpeed) / repeats
 				timeType = "totem placement"
-			-- Multi-use skill rotations can override the final paid-use rate used for resource costs e.g. Kinetic Fusillade
+			-- Multi-use skill rotations can provide their final paid-use rate.
 			elseif skillData.costRateOverride then
 				useSpeed = skillData.costRateOverride
 				timeType = skillData.costRateLabel or "skill use"

@@ -11064,7 +11064,7 @@ skills["KineticFusillade"] = {
 			end
 		end
 	end,
-	preHitRateFunc = function(activeSkill, output, breakdown)
+	finalizeDpsMultiplierFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format
@@ -11368,7 +11368,7 @@ skills["KineticFusilladeAltX"] = {
 			end
 		end
 	end,
-	preHitRateFunc = function(activeSkill, output, breakdown)
+	finalizeDpsMultiplierFunc = function(activeSkill, output, breakdown)
 		local skillData = activeSkill.skillData
 		local t_insert = table.insert
 		local s_format = string.format

@@ -2526,8 +2526,12 @@ function calcs.offence(env, actor, activeSkill)
 		local source, output, cfg, breakdown = pass.source, pass.output, pass.cfg, pass.breakdown
 
 		-- Exerted Attack members
+		local ambushExertsAttack = env.modDB.conditions["AffectedByAmbush"] and activeSkill.skillTypes[SkillType.Melee]
 		local exertedDoubleDamage = env.modDB:Sum("BASE", cfg, "ExertDoubleDamageChance")
 		local exertingWarcryCount = env.modDB:Sum("BASE", nil, "Multiplier:ExertingWarcryCount")
+		if ambushExertsAttack then
+			exertingWarcryCount = 0
+		end
 		globalOutput.OffensiveWarcryEffect = 1
 		globalOutput.MaxOffensiveWarcryEffect = 1
 		globalOutput.TheoreticalOffensiveWarcryEffect = 1
@@ -2541,7 +2545,10 @@ function calcs.offence(env, actor, activeSkill)
 			if not activeSkill.skillTypes[SkillType.NeverExertable] and not activeSkill.skillTypes[SkillType.Triggered] and not activeSkill.skillTypes[SkillType.Channel] and not activeSkill.skillTypes[SkillType.OtherThingUsesSkill]
 				and not activeSkill.skillTypes[SkillType.Retaliation] and not activeSkill.skillTypes[SkillType.SummonsTotem] then
 				for index, value in ipairs(actor.activeSkillList) do
-					if value.activeEffect.grantedEffect.name == "Ancestral Cry" and activeSkill.skillTypes[SkillType.MeleeSingleTarget] and not globalOutput.AncestralCryCalculated and not value.skillFlags.disable then
+					-- Ambush exerts first and prevents other skills from exerting the same attack
+					if ambushExertsAttack then
+						break
+					elseif value.activeEffect.grantedEffect.name == "Ancestral Cry" and activeSkill.skillTypes[SkillType.MeleeSingleTarget] and not globalOutput.AncestralCryCalculated and not value.skillFlags.disable then
 						globalOutput.AncestralCryDuration = calcSkillDuration(value.skillModList, value.skillCfg, value.skillData, env, enemyDB)
 						globalOutput.AncestralCryCooldown = calcSkillCooldown(value.skillModList, value.skillCfg, value.skillData)
 						globalOutput.AncestralCryCastTime = calcWarcryCastTime(value.skillModList, value.skillCfg, value.skillData, actor)
@@ -2753,6 +2760,9 @@ function calcs.offence(env, actor, activeSkill)
 				-- Calculate Exerted Attack Uptime
 				-- There are various strategies a player could use to maximize either warcry effect stacking or staggering
 				-- 1) they don't pay attention and therefore we calculated exerted attack uptime as just the maximum uptime of any enabled warcries that exert attacks
+				if ambushExertsAttack then
+					globalOutput.ExertedAttackUptimeRatio = 100
+				end
 				local warcryList = {"AncestralUpTimeRatio", "InfernalUpTimeRatio", "IntimidatingUpTimeRatio", "RallyingUpTimeRatio", "SeismicUpTimeRatio", "BattlemageUpTimeRatio"}
 				for _, cryTimeRatio in ipairs(warcryList) do
 					globalOutput.ExertedAttackUptimeRatio = m_max(globalOutput.ExertedAttackUptimeRatio or 0, globalOutput[cryTimeRatio] or 0)
@@ -2760,6 +2770,9 @@ function calcs.offence(env, actor, activeSkill)
 				if globalBreakdown then
 					globalBreakdown.ExertedAttackUptimeRatio = { }
 					t_insert(globalBreakdown.ExertedAttackUptimeRatio, s_format("Maximum of:"))
+					if ambushExertsAttack then
+						t_insert(globalBreakdown.ExertedAttackUptimeRatio, "100% ^8(Ambush)")
+					end
 					for _, cryTimeRatio in ipairs(warcryList) do
 						if globalOutput[cryTimeRatio] then
 							t_insert(globalBreakdown.ExertedAttackUptimeRatio, s_format("%d%% ^8(%s Cry Uptime)", globalOutput[cryTimeRatio] or 0, cryTimeRatio:match("(.+)Up.*")))

@@ -148,6 +148,44 @@ describe("TestOffence", function()
 		assertNear(baseMax * 2, build.calcsTab.mainOutput.MainHand.TotalMax, "100%% more attack max")
 	end)
 
+	it("applies exerted attack damage to attacks exerted by Ambush", function()
+		build.itemsTab:CreateDisplayItemFromRaw([[
+		New Item
+		Rusted Sword
+		]])
+		build.itemsTab:AddDisplayItem()
+		build.skillsTab:PasteSocketGroup("Static Strike 20/0  1")
+		build.skillsTab:PasteSocketGroup("Ambush 20/0  1")
+		build.configTab.input.customMods = "20% increased Damage"
+		build.configTab:BuildModList()
+		runCallback("OnFrame")
+
+		local mainSocketGroup = build.skillsTab.socketGroupList[build.mainSocketGroup]
+		mainSocketGroup.displaySkillList[mainSocketGroup.mainActiveSkill].activeEffect.srcInstance.skillPart = 2
+		build.modFlag = true
+		build.buildFlag = true
+		runCallback("OnFrame")
+		local increasedDamageHit = build.calcsTab.mainOutput.MainHand.AverageHit
+
+		build.configTab.input.customMods = "Exerted Attacks deal 20% increased Damage"
+		build.configTab:BuildModList()
+		build.modFlag = true
+		build.buildFlag = true
+		runCallback("OnFrame")
+
+		assert.are.equals(100, build.calcsTab.mainOutput.ExertedAttackUptimeRatio)
+		assert.are.equals(1.2, build.calcsTab.mainOutput.ExertedAttackAvgDmg)
+		assert.are.equals(increasedDamageHit, build.calcsTab.mainOutput.MainHand.AverageHit)
+
+		local ambushExertedHit = build.calcsTab.mainOutput.MainHand.AverageHit
+		-- ambush applies before warcries and exclusively exerts the attack
+		build.skillsTab:PasteSocketGroup("Intimidating Cry 20/0  1")
+		runCallback("OnFrame")
+
+		assert.are.equals(0, build.calcsTab.mainOutput.GlobalWarcryUptimeRatio)
+		assert.are.equals(ambushExertedHit, build.calcsTab.mainOutput.MainHand.AverageHit)
+	end)
+
 	it("parses universal cannot deal/deal no non-<type> damage for player and minions", function()
 		build.skillsTab:PasteSocketGroup("Slot: Body Armour\nArc 20/0  1\n")
 		runCallback("OnFrame")
